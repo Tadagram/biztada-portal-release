@@ -90,16 +90,18 @@ jobs:
           cat RELEASE_NOTES.md
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.get_version.outputs.TAG }}
-          name: "Worker Portal Linux v${{ steps.get_version.outputs.VERSION }}"
-          body_path: RELEASE_NOTES.md
-          draft: false
-          prerelease: false
-          files: |
-            build/*.tar.gz
-            build/*.zip
-            build/checksums.txt
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.get_version.outputs.TAG }}"
+          VER="${{ steps.get_version.outputs.VERSION }}"
+          gh release create "${TAG}" \
+            build/*.tar.gz \
+            build/*.zip \
+            build/checksums.txt \
+            --title "Worker Portal Linux v${VER}" \
+            --notes-file RELEASE_NOTES.md || \
+          gh release upload "${TAG}" \
+            build/*.tar.gz \
+            build/*.zip \
+            build/checksums.txt --clobber
