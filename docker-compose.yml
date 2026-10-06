@@ -1,0 +1,87 @@
+version: "3.8"
+
+services:
+  # ── Visual Virtual Display (Xvfb + TigerVNC + noVNC Web UI) ────────────────
+  vnc-desktop:
+    image: theasp/novnc:latest
+    container_name: tadagram-vnc-desktop
+    restart: unless-stopped
+    environment:
+      - DISPLAY_WIDTH=1920
+      - DISPLAY_HEIGHT=1080
+      - RUN_XTERM=no
+    ports:
+      - "6080:8080" # noVNC Web Interface (http://<server-ip>:6080/vnc.html)
+    networks:
+      - tadagram-worker-net
+
+  # ── Tadagram Linux Worker Auto-Updater Daemon ───────────────────────────────
+  worker-updater:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: updater
+    container_name: tadagram-worker-updater
+    restart: unless-stopped
+    volumes:
+      - ./data/workers:/app/data/workers
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - CORE_API_URL=${CORE_API_URL:-https://business.tadagram.com}
+      - CORE_API_TOKEN=${CORE_API_TOKEN:-}
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID:-0}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH:-}
+      - TELEGRAM_RELEASE_CHANNEL=${TELEGRAM_RELEASE_CHANNEL:-tadabiz_release_manager}
+      - WORKERS_DATA_DIR=/app/data/workers
+      - CHECK_INTERVAL_SECONDS=${CHECK_INTERVAL_SECONDS:-1800}
+    networks:
+      - tadagram-worker-net
+
+  # ── AI Controller Worker (Headless / Desktop-assisted Browser Agent) ────────
+  wkr-ai-controller:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: tadagram-wkr-ai-controller
+    restart: unless-stopped
+    depends_on:
+      - vnc-desktop
+    volumes:
+      - ./data/workers/wkr-ai-controller:/app/worker
+      - ./data/shared:/app/data/shared
+    environment:
+      - DISPLAY=vnc-desktop:0
+      - WORKER_ID=wkr-ai-controller
+      - MQTT_HOST=${MQTT_HOST:-mqtt.tadagram.com}
+      - MQTT_PORT=${MQTT_PORT:-8883}
+      - MQTT_TLS=1
+      - CLOUDFLARE_TUNNEL_ENABLED=1
+    networks:
+      - tadagram-worker-net
+
+  # ── Marketing Worker (Playwright & Multi-Account Automation) ────────────────
+  wkr-marketing:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: tadagram-wkr-marketing
+    restart: unless-stopped
+    depends_on:
+      - vnc-desktop
+    volumes:
+      - ./data/workers/wkr-marketing:/app/worker
+      - ./data/shared:/app/data/shared
+    environment:
+      - DISPLAY=vnc-desktop:0
+      - WORKER_ID=wkr-marketing
+      - MQTT_HOST=${MQTT_HOST:-mqtt.tadagram.com}
+      - MQTT_PORT=${MQTT_PORT:-8883}
+      - MQTT_TLS=1
+    networks:
+      - tadagram-worker-net
+
+networks:
+  tadagram-worker-net:
+    driver: bridge

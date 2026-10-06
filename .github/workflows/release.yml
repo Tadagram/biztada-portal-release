@@ -1,0 +1,105 @@
+name: Release Worker Portal Linux
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine Version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_VER="${{ github.event.inputs.version }}"
+          else
+            RAW_VER="${GITHUB_REF_NAME#v}"
+          fi
+          echo "VERSION=${RAW_VER}" >> $GITHUB_OUTPUT
+          echo "TAG=v${RAW_VER}" >> $GITHUB_OUTPUT
+          echo "Releasing version ${RAW_VER} (Tag: v${RAW_VER})"
+
+      - name: Validate Files & Scripts
+        run: |
+          chmod +x scripts/*.sh
+          python3 -m py_compile updater/worker_updater.py
+          echo "Python syntax validation passed."
+
+      - name: Package Release Assets
+        run: |
+          VER="${{ steps.get_version.outputs.VERSION }}"
+          DIST_NAME="tadagram-worker-portal-linux-v${VER}"
+          TARGET_DIR="build/${DIST_NAME}"
+          
+          mkdir -p "${TARGET_DIR}/scripts" "${TARGET_DIR}/updater" "${TARGET_DIR}/data/workers"
+          
+          # Copy essential deployment files
+          cp README.md "${TARGET_DIR}/"
+          cp CHANGELOG.md "${TARGET_DIR}/"
+          cp Dockerfile "${TARGET_DIR}/"
+          cp docker-compose.yml "${TARGET_DIR}/"
+          cp .env.example "${TARGET_DIR}/"
+          cp VERSION "${TARGET_DIR}/" || echo "${VER}" > "${TARGET_DIR}/VERSION"
+          cp scripts/*.sh "${TARGET_DIR}/scripts/"
+          cp updater/requirements.txt "${TARGET_DIR}/updater/"
+          cp updater/worker_updater.py "${TARGET_DIR}/updater/"
+          touch "${TARGET_DIR}/data/workers/.gitkeep"
+          
+          chmod +x "${TARGET_DIR}/scripts/"*.sh
+          
+          # Create tar.gz and zip archives
+          cd build
+          tar -czvf "${DIST_NAME}.tar.gz" "${DIST_NAME}"
+          zip -r "${DIST_NAME}.zip" "${DIST_NAME}"
+          
+          # Compute SHA-256 Checksums
+          sha256sum "${DIST_NAME}.tar.gz" > checksums.txt
+          sha256sum "${DIST_NAME}.zip" >> checksums.txt
+          cd ..
+          
+          echo "Build finished successfully."
+          ls -la build/
+
+      - name: Extract Release Notes
+        id: release_notes
+        run: |
+          VER="${{ steps.get_version.outputs.VERSION }}"
+          # Extract section from CHANGELOG.md if exists
+          if [ -f CHANGELOG.md ]; then
+            awk -v ver="$VER" '/^## \[/ { if (p) { exit }; if (index($0, ver)) { p=1; next } } p' CHANGELOG.md > RELEASE_NOTES.md || true
+          fi
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "Release version ${VER} for Tadagram Worker Portal Linux" > RELEASE_NOTES.md
+          fi
+          cat RELEASE_NOTES.md
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_version.outputs.TAG }}
+          name: "Worker Portal Linux v${{ steps.get_version.outputs.VERSION }}"
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+          files: |
+            build/*.tar.gz
+            build/*.zip
+            build/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

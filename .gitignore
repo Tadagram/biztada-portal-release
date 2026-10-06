@@ -1,0 +1,15 @@
+.env
+*.env.local
+data/workers/*
+!data/workers/.gitkeep
+data/temp_downloads/
+*.tar.gz
+*.zip
+*.log
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+.idea/
+.vscode/
