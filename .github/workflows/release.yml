@@ -3,13 +3,14 @@ name: Release Worker Portal Linux
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'v*'
   workflow_dispatch:
     inputs:
       version:
         description: 'Release version (e.g. 1.0.0)'
         required: true
         default: '1.0.0'
+        type: string
 
 permissions:
   contents: write
@@ -27,7 +28,7 @@ jobs:
         id: get_version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            RAW_VER="${{ github.event.inputs.version }}"
+            RAW_VER="${{ inputs.version }}"
           else
             RAW_VER="${GITHUB_REF_NAME#v}"
           fi
@@ -80,7 +81,6 @@ jobs:
         id: release_notes
         run: |
           VER="${{ steps.get_version.outputs.VERSION }}"
-          # Extract section from CHANGELOG.md if exists
           if [ -f CHANGELOG.md ]; then
             awk -v ver="$VER" '/^## \[/ { if (p) { exit }; if (index($0, ver)) { p=1; next } } p' CHANGELOG.md > RELEASE_NOTES.md || true
           fi
