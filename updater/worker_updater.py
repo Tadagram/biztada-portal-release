@@ -38,7 +38,7 @@ logging.basicConfig(
 logger = logging.getLogger("worker_updater")
 
 # Configuration Defaults
-API_URL = os.getenv("CORE_API_URL", "https://business.tadagram.com").rstrip("/")
+API_URL = os.getenv("CORE_API_URL", "https://core.tadagram.com").rstrip("/")
 API_TOKEN = os.getenv("CORE_API_TOKEN", "")
 TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
 TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "")

@@ -13,7 +13,7 @@ services:
       - ./data/workers:/app/data/workers
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - CORE_API_URL=${CORE_API_URL:-https://business.tadagram.com}
+      - CORE_API_URL=${CORE_API_URL:-https://core.tadagram.com}
       - CORE_API_TOKEN=${CORE_API_TOKEN:-}
       - TELEGRAM_API_ID=${TELEGRAM_API_ID:-0}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH:-}
@@ -38,7 +38,7 @@ services:
     environment:
       - DISPLAY=:99
       - WORKER_ID=wkr-ai-controller
-      - CORE_API_URL=${CORE_API_URL:-https://business.tadagram.com}
+      - CORE_API_URL=${CORE_API_URL:-https://core.tadagram.com}
       - PORTAL_DEVICE_ID=${PORTAL_DEVICE_ID:-}
       - PORTAL_WORKER_UUID=${PORTAL_WORKER_UUID:-}
       - MQTT_HOST=${MQTT_HOST:-mqtt.tadagram.com}
@@ -63,7 +63,7 @@ services:
     environment:
       - DISPLAY=:99
       - WORKER_ID=wkr-marketing
-      - CORE_API_URL=${CORE_API_URL:-https://business.tadagram.com}
+      - CORE_API_URL=${CORE_API_URL:-https://core.tadagram.com}
       - PORTAL_DEVICE_ID=${PORTAL_DEVICE_ID:-}
       - PORTAL_WORKER_UUID=${PORTAL_WORKER_UUID:-}
       - MQTT_HOST=${MQTT_HOST:-mqtt.tadagram.com}
