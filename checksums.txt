@@ -1,3 +1,3 @@
-0e80a6d09b332856fd4bb2c4a9a9b2dd95a977264f7b84aa5b0c1ba840d01940  tadagram-worker-portal-linux-v1.0.1.tar.gz
-ae56392f83143bdcf9517b5e15de82192c3384599b4ba0288aff170724bad3f6  tadagram-worker-portal-linux-v1.0.1.zip
+b7fcf7789a0734a1a9b292d4575dd70c3755fc92ef580999465178cd7b35a8a9  tadagram-worker-portal-linux-v1.0.2.tar.gz
+a71d7730c7e6ef21844b7eadf4bf7e2a314e4a9c4b349f3988ecb73f67e27b12  tadagram-worker-portal-linux-v1.0.2.zip
 c2348f8db3b4ce3aa057629df40ef2385617a63fd39bcad9fdd56064d131aea2  TadaBusiness_Setup.exe
