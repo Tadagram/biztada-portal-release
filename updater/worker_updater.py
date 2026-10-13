@@ -154,26 +154,70 @@ def fetch_releases_from_api() -> List[dict]:
     return []
 
 
+def get_telegram_string_session() -> Optional[str]:
+    """
+    Fetches the authenticated GramJS/Telethon StringSession from svc-core-api using CORE_API_TOKEN.
+    """
+    if not API_TOKEN:
+        return None
+    url = f"{API_URL}/api/auth/telegram/session-string"
+    headers = {"Authorization": f"Bearer {API_TOKEN}"}
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            session_str = data.get("session_string")
+            if session_str:
+                return session_str
+    except Exception as e:
+        logger.warning(f"Failed to fetch telegram session string from API: {e}")
+    return None
+
+
+async def get_telegram_client():
+    """
+    Creates and connects an authorized Telethon client using StringSession if available.
+    """
+    if not TELEGRAM_API_ID or not TELEGRAM_API_HASH:
+        return None
+
+    from telethon import TelegramClient
+    from telethon.sessions import StringSession
+
+    session_str = os.getenv("TELEGRAM_SESSION_STRING") or get_telegram_string_session()
+    if session_str:
+        client = TelegramClient(StringSession(session_str), TELEGRAM_API_ID, TELEGRAM_API_HASH)
+    else:
+        session_file = Path("/tmp/tadagram_updater_tg.session")
+        client = TelegramClient(str(session_file), TELEGRAM_API_ID, TELEGRAM_API_HASH)
+
+    try:
+        await client.connect()
+        if await client.is_user_authorized():
+            return client
+        logger.info("Telegram MTProto client not authorized for direct scan.")
+    except Exception as e:
+        logger.warning(f"Failed to connect Telegram MTProto client: {e}")
+
+    try:
+        await client.disconnect()
+    except Exception:
+        pass
+    return None
+
+
 async def fetch_releases_from_telegram() -> List[dict]:
     """
     Direct MTProto scanner from Telegram Channel when credentials are provided.
     """
-    if not TELEGRAM_API_ID or not TELEGRAM_API_HASH:
+    client = await get_telegram_client()
+    if not client:
         return []
 
-    from telethon import TelegramClient
     from telethon.tl.types import DocumentAttributeFilename
 
     releases = []
-    session_file = Path("/tmp/tadagram_updater_tg.session")
-    client = TelegramClient(str(session_file), TELEGRAM_API_ID, TELEGRAM_API_HASH)
-
     try:
-        await client.connect()
-        if not await client.is_user_authorized():
-            logger.info("Telegram MTProto client not authorized for direct scan, falling back to API.")
-            return []
-
         entity = await client.get_entity(TELEGRAM_RELEASE_CHANNEL)
         messages = await client.get_messages(entity, limit=50)
 
@@ -248,9 +292,10 @@ def filter_linux_updates(all_releases: List[dict], installed: Dict[str, str]) ->
     return updates
 
 
-def download_and_install_worker(release: dict) -> bool:
+async def download_and_install_worker(release: dict) -> bool:
     """
     Downloads worker package and performs atomic deployment.
+    Uses MTProto direct download if message_id is available, fallback to HTTP.
     """
     worker_id = release["worker_id"]
     version = release["version"]
@@ -266,16 +311,38 @@ def download_and_install_worker(release: dict) -> bool:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_file = Path(tmpdir) / filename
-        try:
-            with requests.get(download_url, headers=headers, stream=True, timeout=300) as r:
-                r.raise_for_status()
-                with open(tmp_file, "wb") as f:
-                    for chunk in r.iter_content(chunk_size=65536):
-                        f.write(chunk)
-            logger.info(f"Downloaded {filename} ({tmp_file.stat().st_size} bytes).")
-        except Exception as e:
-            logger.error(f"Failed to download {filename}: {e}")
-            return False
+        downloaded = False
+
+        # Fast path: Try direct MTProto download from Telegram channel
+        if release.get("message_id"):
+            try:
+                tg_client = await get_telegram_client()
+                if tg_client:
+                    entity = await tg_client.get_entity(release.get("channel_username") or TELEGRAM_RELEASE_CHANNEL)
+                    msg = await tg_client.get_messages(entity, ids=release["message_id"])
+                    if msg and msg.media:
+                        logger.info(f"Direct MTProto fast-path: downloading {filename} from message {release['message_id']}...")
+                        await tg_client.download_media(msg, file=str(tmp_file))
+                        if tmp_file.exists() and tmp_file.stat().st_size > 1024:
+                            downloaded = True
+                            logger.info(f"Downloaded {filename} via MTProto ({tmp_file.stat().st_size} bytes).")
+                    await tg_client.disconnect()
+            except Exception as e:
+                logger.warning(f"MTProto download failed for {filename}: {e}")
+
+        # Fallback to HTTP download
+        if not downloaded:
+            try:
+                with requests.get(download_url, headers=headers, stream=True, timeout=300) as r:
+                    r.raise_for_status()
+                    with open(tmp_file, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=65536):
+                            f.write(chunk)
+                downloaded = True
+                logger.info(f"Downloaded {filename} via HTTP ({tmp_file.stat().st_size} bytes).")
+            except Exception as e:
+                logger.error(f"Failed to download {filename}: {e}")
+                return False
 
         # Verify SHA256 if provided
         if release.get("sha256"):
@@ -327,17 +394,119 @@ def restart_worker_service(worker_id: str):
     Triggers container or supervisor reload for the updated worker.
     """
     logger.info(f"Restarting service for worker: {worker_id}")
-    # If running inside docker-compose or supervisor
     try:
         subprocess.run(["docker", "compose", "restart", worker_id], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
 
+PORTAL_ROOT = Path(os.getenv("PORTAL_ROOT_DIR", "/app/portal_root")).resolve()
+if not PORTAL_ROOT.exists():
+    PORTAL_ROOT = Path("/opt/tadagram-worker-portal")
+if not PORTAL_ROOT.exists() and Path("/app").exists():
+    PORTAL_ROOT = Path("/app")
+
+GITHUB_PORTAL_API = "https://api.github.com/repos/Tadagram/biztada-portal-release/releases/latest"
+
+
+def check_and_update_portal_stack() -> bool:
+    """
+    100% Autonomous Portal Stack Self-Updater for Linux:
+    Checks GitHub Releases for newer Linux Portal Stack releases (tadagram-worker-portal-linux.tar.gz).
+    If a newer version is found, downloads, verifies, unpacks, and restarts containers.
+    """
+    version_file = PORTAL_ROOT / "VERSION"
+    if not version_file.exists():
+        version_file = Path("/app/VERSION")
+
+    current_ver = "1.0.0"
+    if version_file.exists():
+        try:
+            current_ver = version_file.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+
+    try:
+        resp = requests.get(GITHUB_PORTAL_API, headers={"User-Agent": "Biztada-Linux-Portal"}, timeout=15)
+        if resp.status_code != 200:
+            return False
+        rel = resp.json()
+        tag = (rel.get("tag_name") or "").lstrip("v").strip()
+        if not tag:
+            return False
+
+        # Compare versions
+        if semver_parser.parse(tag) <= semver_parser.parse(current_ver):
+            return False
+
+        logger.info(f"[PortalUpdate] 🚀 New Linux Portal release detected: v{tag} (current: v{current_ver}). Auto-updating stack...")
+
+        # Find tar.gz asset
+        assets = rel.get("assets", [])
+        tar_asset = next((a for a in assets if a.get("name", "").endswith(".tar.gz") and "linux" in a.get("name", "")), None)
+        if not tar_asset:
+            tar_asset = next((a for a in assets if a.get("name", "").endswith(".tar.gz")), None)
+
+        if not tar_asset:
+            logger.warning("[PortalUpdate] No suitable .tar.gz archive found in release assets.")
+            return False
+
+        tar_url = tar_asset.get("browser_download_url")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive_path = Path(tmpdir) / "update.tar.gz"
+            r = requests.get(tar_url, stream=True, timeout=120)
+            r.raise_for_status()
+            with open(archive_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=65536):
+                    f.write(chunk)
+
+            # Unpack safely into PORTAL_ROOT (preserve .env, data/)
+            import tarfile
+            with tarfile.open(archive_path, "r:gz") as tar:
+                for member in tar.getmembers():
+                    if member.name in (".env", "data", "data/workers", "data/shared") or member.name.startswith("data/"):
+                        continue
+                    tar.extract(member, path=PORTAL_ROOT)
+
+            # Update VERSION file
+            version_file.write_text(tag, encoding="utf-8")
+            logger.info(f"[PortalUpdate] ✅ Successfully unpacked Portal v{tag} into {PORTAL_ROOT}")
+
+            # Reload docker stack
+            try:
+                logger.info("[PortalUpdate] Reloading Docker Compose services...")
+                compose_file = PORTAL_ROOT / "docker-compose.yml"
+                cmd = ["docker", "compose", "up", "-d", "--build", "--remove-orphans"]
+                if compose_file.exists():
+                    cmd = ["docker", "compose", "-f", str(compose_file), "up", "-d", "--build", "--remove-orphans"]
+                subprocess.run(
+                    cmd,
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            except Exception as e:
+                logger.warning(f"[PortalUpdate] Compose reload notice: {e}")
+
+            return True
+    except Exception as e:
+        logger.warning(f"[PortalUpdate] Check/update error: {e}")
+        return False
+
+
 async def check_and_update_cycle():
     """
-    Performs one check and update pass.
+    Performs one check and update pass:
+    1. Portal Stack self-update from GitHub Releases
+    2. Workers update from Telegram MTProto / Core API
     """
+    # 1. Linux Portal stack self-update
+    try:
+        check_and_update_portal_stack()
+    except Exception as e:
+        logger.warning(f"Portal stack self-update notice: {e}")
+
+    # 2. Worker updates
     logger.info("Scanning for Linux worker updates...")
     installed = get_installed_workers()
     logger.info(f"Currently installed workers: {installed}")
@@ -363,11 +532,11 @@ async def check_and_update_cycle():
         return
 
     for upd in updates:
-        download_and_install_worker(upd)
+        await download_and_install_worker(upd)
 
 
 async def main():
-    logger.info("Starting Tadagram Worker Portal Linux Auto-Updater Daemon...")
+    logger.info("Starting Tadagram Worker Portal Linux Autonomous Auto-Updater Daemon...")
     while True:
         try:
             await check_and_update_cycle()

@@ -12,6 +12,7 @@ services:
     volumes:
       - ./data/workers:/app/data/workers
       - /var/run/docker.sock:/var/run/docker.sock
+      - .:/app/portal_root
     environment:
       - CORE_API_URL=${CORE_API_URL:-https://core.tadagram.com}
       - CORE_API_TOKEN=${CORE_API_TOKEN:-}
