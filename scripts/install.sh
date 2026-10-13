@@ -47,8 +47,9 @@ mkdir -p "${INSTALL_DIR}/data/workers" "${INSTALL_DIR}/data/shared"
 if [ -f "./docker-compose.yml" ]; then
     cp -rn . "${INSTALL_DIR}/" 2>/dev/null || true
 elif [ ! -f "${INSTALL_DIR}/docker-compose.yml" ]; then
-    echo -e "${BLUE}Cloning worker-portal-linux from repository...${NC}"
-    git clone https://github.com/Tadagram/worker-portal-linux.git "${INSTALL_DIR}" 2>/dev/null || {
+    echo -e "${BLUE}Cloning biztada-portal-release from repository...${NC}"
+    git clone https://github.com/Tadagram/biztada-portal-release.git "${INSTALL_DIR}" 2>/dev/null || {
+
         echo -e "${YELLOW}Could not clone via HTTPS, falling back to local files or releases...${NC}"
     }
 fi

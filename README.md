@@ -48,8 +48,9 @@ graph TD
 Run this on any clean Ubuntu 20.04/22.04/24.04 or Debian 11/12 VPS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Tadagram/worker-portal-linux/main/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Tadagram/biztada-portal-release/main/scripts/install.sh | sudo bash
 ```
+
 
 This automated installer:
 1. Installs Docker Engine & Compose plugin if not present.
