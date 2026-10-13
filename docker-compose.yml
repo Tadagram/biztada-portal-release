@@ -38,6 +38,9 @@ services:
     environment:
       - DISPLAY=:99
       - WORKER_ID=wkr-ai-controller
+      - CORE_API_URL=${CORE_API_URL:-https://business.tadagram.com}
+      - PORTAL_DEVICE_ID=${PORTAL_DEVICE_ID:-}
+      - PORTAL_WORKER_UUID=${PORTAL_WORKER_UUID:-}
       - MQTT_HOST=${MQTT_HOST:-mqtt.tadagram.com}
       - MQTT_PORT=${MQTT_PORT:-8883}
       - MQTT_TLS=1
@@ -60,6 +63,9 @@ services:
     environment:
       - DISPLAY=:99
       - WORKER_ID=wkr-marketing
+      - CORE_API_URL=${CORE_API_URL:-https://business.tadagram.com}
+      - PORTAL_DEVICE_ID=${PORTAL_DEVICE_ID:-}
+      - PORTAL_WORKER_UUID=${PORTAL_WORKER_UUID:-}
       - MQTT_HOST=${MQTT_HOST:-mqtt.tadagram.com}
       - MQTT_PORT=${MQTT_PORT:-8883}
       - MQTT_TLS=1
