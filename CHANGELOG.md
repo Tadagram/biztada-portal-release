@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.3] - 2026-10-14
+
+### Fixed & Improved
+- **Autonomous Auto-Updater Robustness**:
+  - Added `normalize_release()` to correctly extract canonical worker IDs by stripping platform extensions (`-linux`), fixing corrupted paths and invalid service restart targets.
+  - Implemented automatic Layer-3 AES-256-GCM decryption (`decrypt_wrkx()`) for downloaded `.wrkx` payloads directly into executable ELF binaries with `0755` permissions.
+  - Implemented atomic Inode swap (`os.replace`) to prevent Linux `[Errno 26] Text file busy` when updating running worker binaries.
+  - Added direct Docker daemon container restart fallback via `/var/run/docker.sock` (`docker restart tadagram-{worker_id}`).
+  - Standardized runner `ENTRYPOINT ["/app/entrypoint.sh"]` with Unix line terminators.
+
 ## [1.0.1] - 2026-10-13
 
 ### Added

@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Tuple
 from packaging import version as semver_parser
 import requests
 from dotenv import load_dotenv
+from Crypto.Cipher import AES
 
 # Load environment variables
 load_dotenv()
@@ -46,6 +47,7 @@ TELEGRAM_RELEASE_CHANNEL = os.getenv("TELEGRAM_RELEASE_CHANNEL", "tadabiz_releas
 WORKERS_DIR = Path(os.getenv("WORKERS_DATA_DIR", "/app/data/workers")).resolve()
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL_SECONDS", "1800")) # 30 mins
 ENCRYPTION_KEY = os.getenv("WRKX_ENCRYPTION_KEY", "")
+MASTER_SECRET = os.getenv("WORKER_MASTER_SECRET", "tadagram-dev-secret-CHANGE-IN-PROD-b3a9f2e1c4d5")
 
 # Regex for detecting worker releases and platform tagging
 # Matches:
@@ -54,6 +56,82 @@ ENCRYPTION_KEY = os.getenv("WRKX_ENCRYPTION_KEY", "")
 #   wkr-marketing_v1.2.3-linux.wrkx
 #   wkr-marketing_v1.2.3.wrkx
 RELEASE_RE = re.compile(r"^([a-z0-9-_]+?)[_-]v?(\d+\.\d+(?:\.\d+)?(?:-[a-z0-9.]+)?)\.(wrkx|exe|bin|tar\.gz)$", re.IGNORECASE)
+
+
+def decrypt_wrkx(wrkx_path: Path, output_binary_path: Path, master_secret: str = MASTER_SECRET) -> bool:
+    """
+    Decrypts a Layer-3 AES-256-GCM .wrkx package to an executable Linux ELF binary.
+    Uses atomic temporary file replacement (os.replace) to prevent [Errno 26] Text file busy
+    when updating binaries for active runner containers.
+    Format: [12-byte Nonce] + [Ciphertext] + [16-byte Tag]
+    Key: SHA-256('wrkx-portable::' + master_secret)
+    """
+    try:
+        data = wrkx_path.read_bytes()
+        tmp_out = output_binary_path.with_name(f"{output_binary_path.name}.tmp")
+
+        # If already an unencrypted ELF binary, preserve directly
+        if data.startswith(b"\x7fELF"):
+            logger.info(f"{wrkx_path.name} is already a native Linux ELF binary. Preserving directly.")
+            tmp_out.write_bytes(data)
+            tmp_out.chmod(0o755)
+            os.replace(tmp_out, output_binary_path)
+            return True
+
+        if len(data) < 28:
+            logger.error(f"Invalid .wrkx package: file size too small ({len(data)} bytes) in {wrkx_path}")
+            return False
+
+        nonce = data[:12]
+        tag = data[-16:]
+        ciphertext = data[12:-16]
+
+        key = hashlib.sha256(b"wrkx-portable::" + master_secret.encode("utf-8")).digest()
+        cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+        plaintext = cipher.decrypt_and_verify(ciphertext, tag)
+
+        # Atomic file write & replace (safe against running processes / ETXTBSY)
+        tmp_out.write_bytes(plaintext)
+        tmp_out.chmod(0o755)
+        os.replace(tmp_out, output_binary_path)
+        logger.info(f"✅ Successfully decrypted {wrkx_path.name} -> {output_binary_path.name} ({len(plaintext)} bytes, mode 0755, atomic swap)")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to decrypt {wrkx_path.name} with AES-256-GCM: {e}")
+        return False
+
+
+def ensure_run_script(worker_id: str, target_dir: Path):
+    """
+    Ensures run.sh exists and has executable permissions for the worker runner container.
+    """
+    run_sh = target_dir / "run.sh"
+    if not run_sh.exists():
+        content = f"""#!/bin/bash
+CHROME_BIN=$(find /root/.cache/ms-playwright /root/.cache/patchright -name chrome -type f 2>/dev/null | head -n 1)
+if [ -n "$CHROME_BIN" ]; then
+    ln -sf "$CHROME_BIN" /usr/bin/google-chrome
+    mkdir -p /opt/google/chrome
+    ln -sf "$CHROME_BIN" /opt/google/chrome/chrome
+fi
+
+export PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
+export PYTHONPATH=/usr/local/lib/python3.11/site-packages:$PYTHONPATH
+export PLAYWRIGHT_NODEJS_PATH=/usr/local/lib/python3.11/site-packages/playwright/driver/node
+export DISPLAY=:99
+export HEADLESS=${{HEADLESS:-true}}
+
+if ! pgrep -x "Xvfb" > /dev/null; then
+    rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
+    Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp -ac &
+    sleep 1
+fi
+
+chmod +x /app/worker/{worker_id}
+exec /app/worker/{worker_id}
+"""
+        run_sh.write_text(content, encoding="utf-8")
+    run_sh.chmod(0o755)
 
 
 def parse_release_filename(filename: str) -> Optional[Tuple[str, str, str]]:
@@ -67,7 +145,7 @@ def parse_release_filename(filename: str) -> Optional[Tuple[str, str, str]]:
 
     raw_id, ver, ext = m.groups()
     platform = "all"
-    norm_id = raw_id.lower()
+    norm_id = raw_id.lower().strip()
 
     # Detect platform tag in worker_id
     if norm_id.endswith("-linux") or norm_id.endswith("_linux"):
@@ -93,10 +171,43 @@ def parse_release_filename(filename: str) -> Optional[Tuple[str, str, str]]:
     return norm_id, ver, platform
 
 
+def normalize_release(release: dict) -> Optional[dict]:
+    """
+    Guarantees canonical worker_id, cleaned semver, and platform filtering for Linux.
+    Works whether release came from Core API or Telegram MTProto.
+    """
+    filename = release.get("filename", "")
+    parsed = parse_release_filename(filename) if filename else None
+    if parsed:
+        canon_id, ver, platform = parsed
+    else:
+        raw_id = (release.get("worker_id") or "").lower().strip()
+        canon_id = re.sub(r"[-_](?:linux|windows|win)$", "", raw_id)
+        ver = (release.get("version") or "").strip().lstrip("v")
+        platform = (release.get("platform") or "all").lower()
+        if "linux" in raw_id or "linux" in filename.lower():
+            platform = "linux"
+        elif "windows" in raw_id or "win" in raw_id or "win" in filename.lower():
+            platform = "windows"
+
+    if not canon_id or not ver:
+        return None
+
+    # Filter out non-Linux platforms
+    if platform not in ("linux", "all"):
+        return None
+
+    norm = dict(release)
+    norm["worker_id"] = canon_id
+    norm["version"] = ver
+    norm["platform"] = platform
+    return norm
+
+
 def get_installed_workers() -> Dict[str, str]:
     """
     Scans the local workers directory and retrieves the installed version
-    for each worker.
+    for each worker using canonical worker IDs.
     """
     installed = {}
     if not WORKERS_DIR.exists():
@@ -105,7 +216,8 @@ def get_installed_workers() -> Dict[str, str]:
 
     for item in WORKERS_DIR.iterdir():
         if item.is_dir():
-            worker_id = item.name
+            raw_id = item.name
+            canon_id = re.sub(r"[-_]linux$", "", raw_id)
             worker_json = item / "worker.json"
             version_txt = item / "version.txt"
 
@@ -124,14 +236,16 @@ def get_installed_workers() -> Dict[str, str]:
                     logger.warning(f"Error reading {version_txt}: {e}")
 
             if ver:
-                installed[worker_id] = ver
+                # Prefer canonical directory metadata over legacy -linux directory
+                if canon_id not in installed or raw_id == canon_id:
+                    installed[canon_id] = ver
 
     return installed
 
 
 def fetch_releases_from_api() -> List[dict]:
     """
-    Fetches available worker releases from Core API.
+    Fetches available worker releases from Core API and normalizes them.
     """
     url = f"{API_URL}/api/updates/worker-releases"
     headers = {}
@@ -142,10 +256,18 @@ def fetch_releases_from_api() -> List[dict]:
         resp = requests.get(url, headers=headers, timeout=30)
         if resp.status_code == 200:
             data = resp.json()
+            raw_releases = []
             if isinstance(data, dict) and "data" in data:
-                return data["data"]
+                raw_releases = data["data"]
             elif isinstance(data, list):
-                return data
+                raw_releases = data
+
+            normalized = []
+            for r in raw_releases:
+                norm = normalize_release(r)
+                if norm:
+                    normalized.append(norm)
+            return normalized
         else:
             logger.warning(f"API /api/updates/worker-releases returned status {resp.status_code}")
     except Exception as e:
@@ -174,9 +296,49 @@ def get_telegram_string_session() -> Optional[str]:
     return None
 
 
+def parse_gramjs_or_string_session(session_str: str):
+    """
+    Parses either a Telethon StringSession or a GramJS StringSession into a Telethon session object.
+    GramJS sessions start with '1' and pack (dc_id, ip_len, ip, port, auth_key).
+    """
+    from telethon.sessions import StringSession, MemorySession
+    from telethon.crypto import AuthKey
+    import base64
+    import struct
+
+    session_str = session_str.strip()
+    # Try standard Telethon StringSession first
+    try:
+        ss = StringSession(session_str)
+        if ss.auth_key:
+            return ss
+    except Exception:
+        pass
+
+    # Try GramJS session parsing
+    try:
+        if session_str.startswith("1"):
+            raw = base64.urlsafe_b64decode(session_str[1:] + "==")
+            dc_id = raw[0]
+            ip_len = struct.unpack(">H", raw[1:3])[0]
+            ip = raw[3:3 + ip_len].decode("utf-8")
+            port = struct.unpack(">H", raw[3 + ip_len:5 + ip_len])[0]
+            key_bytes = raw[5 + ip_len:5 + ip_len + 256]
+            if len(key_bytes) == 256:
+                mem = MemorySession()
+                mem.set_dc(dc_id, ip, port)
+                mem.auth_key = AuthKey(data=key_bytes)
+                return mem
+    except Exception as e:
+        logger.debug(f"GramJS session parse error: {e}")
+
+    return StringSession(session_str)
+
+
 async def get_telegram_client():
     """
     Creates and connects an authorized Telethon client using StringSession if available.
+    Supports both Telethon and GramJS (Node/Browser) string sessions seamlessly.
     """
     if not TELEGRAM_API_ID or not TELEGRAM_API_HASH:
         return None
@@ -186,7 +348,12 @@ async def get_telegram_client():
 
     session_str = os.getenv("TELEGRAM_SESSION_STRING") or get_telegram_string_session()
     if session_str:
-        client = TelegramClient(StringSession(session_str), TELEGRAM_API_ID, TELEGRAM_API_HASH)
+        try:
+            sess = parse_gramjs_or_string_session(session_str)
+            client = TelegramClient(sess, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+        except Exception as e:
+            logger.warning(f"Failed to initialize Telethon session: {e}")
+            client = TelegramClient(StringSession(session_str), TELEGRAM_API_ID, TELEGRAM_API_HASH)
     else:
         session_file = Path("/tmp/tadagram_updater_tg.session")
         client = TelegramClient(str(session_file), TELEGRAM_API_ID, TELEGRAM_API_HASH)
@@ -230,20 +397,17 @@ async def fetch_releases_from_telegram() -> List[dict]:
                         fname = attr.file_name
                         break
 
-                parsed = parse_release_filename(fname)
-                if parsed:
-                    worker_id, ver, platform = parsed
-                    releases.append({
-                        "worker_id": worker_id,
-                        "version": ver,
-                        "filename": fname,
-                        "size_bytes": doc.size,
-                        "posted_at": msg.date.isoformat() if msg.date else "",
-                        "message_id": msg.id,
-                        "channel_username": TELEGRAM_RELEASE_CHANNEL,
-                        "platform": platform,
-                        "changelog": (msg.text or "").strip()
-                    })
+                raw = {
+                    "filename": fname,
+                    "size_bytes": doc.size,
+                    "posted_at": msg.date.isoformat() if msg.date else "",
+                    "message_id": msg.id,
+                    "channel_username": TELEGRAM_RELEASE_CHANNEL,
+                    "changelog": (msg.text or "").strip()
+                }
+                norm = normalize_release(raw)
+                if norm:
+                    releases.append(norm)
     except Exception as e:
         logger.error(f"Telegram MTProto scan error: {e}")
     finally:
@@ -294,7 +458,7 @@ def filter_linux_updates(all_releases: List[dict], installed: Dict[str, str]) ->
 
 async def download_and_install_worker(release: dict) -> bool:
     """
-    Downloads worker package and performs atomic deployment.
+    Downloads worker package and performs atomic deployment with AES-256-GCM decryption.
     Uses MTProto direct download if message_id is available, fallback to HTTP.
     """
     worker_id = release["worker_id"]
@@ -357,15 +521,34 @@ async def download_and_install_worker(release: dict) -> bool:
 
         # Atomic installation
         dest_wrkx = target_dir / f"{worker_id}.wrkx"
+        dest_bin = target_dir / worker_id
         dest_version = target_dir / "version.txt"
         dest_json = target_dir / "worker.json"
 
         # Backup existing
         if dest_wrkx.exists():
             shutil.copy2(dest_wrkx, target_dir / f"{worker_id}.wrkx.bak")
+        if dest_bin.exists():
+            shutil.copy2(dest_bin, target_dir / f"{worker_id}.bak")
 
         try:
-            shutil.copy2(tmp_file, dest_wrkx)
+            tmp_wrkx = target_dir / f"{worker_id}.wrkx.tmp"
+            shutil.copy2(tmp_file, tmp_wrkx)
+            os.replace(tmp_wrkx, dest_wrkx)
+
+            # Decrypt .wrkx to executable Linux binary (atomic swap)
+            decrypt_ok = decrypt_wrkx(dest_wrkx, dest_bin)
+            if not decrypt_ok:
+                logger.error(f"Decryption failed during installation for {worker_id}")
+                if (target_dir / f"{worker_id}.bak").exists():
+                    tmp_restore = target_dir / f"{worker_id}.restore.tmp"
+                    shutil.copy2(target_dir / f"{worker_id}.bak", tmp_restore)
+                    os.replace(tmp_restore, dest_bin)
+                return False
+
+            # Ensure run script exists and is executable
+            ensure_run_script(worker_id, target_dir)
+
             dest_version.write_text(version, encoding="utf-8")
             
             # Update worker.json metadata
@@ -377,27 +560,62 @@ async def download_and_install_worker(release: dict) -> bool:
                 "platform": "linux"
             }
             dest_json.write_text(json.dumps(cfg_data, indent=2), encoding="utf-8")
-            logger.info(f"Successfully installed '{worker_id}' v{version} into {target_dir}")
+            logger.info(f"✅ Successfully installed and decrypted '{worker_id}' v{version} into {target_dir}")
 
             # Notify supervisor / restart container
             restart_worker_service(worker_id)
             return True
         except Exception as e:
-            logger.error(f"Failed during file copy for {worker_id}: {e}")
+            logger.error(f"Failed during deployment for {worker_id}: {e}")
+            if (target_dir / f"{worker_id}.bak").exists():
+                try:
+                    tmp_restore = target_dir / f"{worker_id}.restore.tmp"
+                    shutil.copy2(target_dir / f"{worker_id}.bak", tmp_restore)
+                    os.replace(tmp_restore, dest_bin)
+                except Exception:
+                    pass
             if (target_dir / f"{worker_id}.wrkx.bak").exists():
-                shutil.copy2(target_dir / f"{worker_id}.wrkx.bak", dest_wrkx)
+                try:
+                    shutil.copy2(target_dir / f"{worker_id}.wrkx.bak", dest_wrkx)
+                except Exception:
+                    pass
             return False
 
 
-def restart_worker_service(worker_id: str):
+def restart_worker_service(worker_id: str) -> bool:
     """
-    Triggers container or supervisor reload for the updated worker.
+    Triggers container reload for the updated worker via Docker socket.
+    Uses direct container restart with Docker Compose fallback.
     """
-    logger.info(f"Restarting service for worker: {worker_id}")
+    logger.info(f"Restarting service container for worker: {worker_id}")
+    container_name = f"tadagram-{worker_id}"
+
+    # Method 1: Direct container restart via docker CLI (socket)
     try:
-        subprocess.run(["docker", "compose", "restart", worker_id], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
+        res = subprocess.run(["docker", "restart", container_name], capture_output=True, text=True, timeout=30)
+        if res.returncode == 0:
+            logger.info(f"✅ Container '{container_name}' successfully restarted.")
+            return True
+        logger.warning(f"docker restart {container_name} notice: {res.stderr.strip()}")
+    except Exception as e:
+        logger.warning(f"Direct docker restart error: {e}")
+
+    # Method 2: Docker Compose restart fallback
+    try:
+        compose_file = PORTAL_ROOT / "docker-compose.yml"
+        cmd = ["docker", "compose"]
+        if compose_file.exists():
+            cmd.extend(["-f", str(compose_file)])
+        cmd.extend(["-p", "worker-portal-linux", "restart", worker_id])
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+        if res.returncode == 0:
+            logger.info(f"✅ Service '{worker_id}' successfully restarted via docker compose.")
+            return True
+        logger.error(f"docker compose restart failed: {res.stderr.strip()}")
+    except Exception as e:
+        logger.error(f"Compose restart error: {e}")
+
+    return False
 
 
 PORTAL_ROOT = Path(os.getenv("PORTAL_ROOT_DIR", "/app/portal_root")).resolve()

@@ -63,4 +63,4 @@ RUN pip install --no-cache-dir patchright playwright python-dotenv requests paho
 COPY scripts/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh 2>/dev/null || true
 
-CMD ["/bin/bash", "-c", "if [ -f /app/worker/run.sh ]; then bash /app/worker/run.sh; elif [ -f /app/worker/*.wrkx ]; then echo 'Worker binary detected. Starting supervisor...'; tail -f /dev/null; else echo 'Waiting for worker payload deployment from Updater...'; tail -f /dev/null; fi"]
+ENTRYPOINT ["/app/entrypoint.sh"]
