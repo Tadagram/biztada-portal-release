@@ -63,6 +63,7 @@ services:
       - ./data/shared:/app/data/shared
     environment:
       - DISPLAY=:99
+      - HEADLESS=true
       - WORKER_ID=wkr-marketing
       - CORE_API_URL=${CORE_API_URL:-https://core.tadagram.com}
       - PORTAL_DEVICE_ID=${PORTAL_DEVICE_ID:-}

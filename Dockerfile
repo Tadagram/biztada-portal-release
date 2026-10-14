@@ -56,9 +56,9 @@ WORKDIR /app
 RUN curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared && \
     chmod +x /usr/local/bin/cloudflared
 
-RUN pip install --no-cache-dir playwright python-dotenv requests paho-mqtt pycryptodome && \
-    playwright install chromium --with-deps || true && \
-    CHROME_BIN=$(find /root/.cache/ms-playwright -name chrome -type f 2>/dev/null | head -n 1) && [ -n "$CHROME_BIN" ] && ln -sf "$CHROME_BIN" /usr/bin/google-chrome || true
+RUN pip install --no-cache-dir patchright playwright python-dotenv requests paho-mqtt pycryptodome && \
+    patchright install chromium --with-deps || playwright install chromium --with-deps || true && \
+    CHROME_BIN=$(find /root/.cache/ms-playwright /root/.cache/patchright -name chrome -type f 2>/dev/null | head -n 1) && [ -n "$CHROME_BIN" ] && ln -sf "$CHROME_BIN" /usr/bin/google-chrome || true
 
 COPY scripts/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh 2>/dev/null || true
