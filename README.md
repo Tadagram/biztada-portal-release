@@ -1,6 +1,6 @@
 # 🐧 Tadagram Worker Portal for Linux
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](VERSION)
+[![Version](https://img.shields.io/badge/version-2.0.3-blue.svg)](VERSION)
 [![Platform](https://img.shields.io/badge/platform-Linux%20x86__64-orange.svg)]()
 [![Docker](https://img.shields.io/badge/docker-compose%20v2-2496ED.svg)]()
 [![Auto-Updater](https://img.shields.io/badge/updater-Telegram%20MTProto%20%2B%20API-green.svg)]()
@@ -77,7 +77,7 @@ nano .env
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
-| `CORE_API_URL` | Backend Core API URL | `https://business.tadagram.com` |
+| `CORE_API_URL` | Backend Core API URL | `https://core.tadagram.com` |
 | `CORE_API_TOKEN` | Bearer JWT / API Token for private downloads | *Empty* |
 | `TELEGRAM_API_ID` | Telegram App API ID for fast-path CDN MTProto download | `0` |
 | `TELEGRAM_API_HASH` | Telegram App API Hash | *Empty* |
@@ -153,15 +153,23 @@ To build a release tarball and push a new version:
 
 ### On Linux / macOS:
 ```bash
-./scripts/release.sh 1.0.1
+./scripts/release.sh 2.0.3
 ```
 
 ### On Windows PowerShell:
 ```powershell
-.\scripts\release.ps1 -NewVersion 1.0.1
+.\scripts\release.ps1 -NewVersion 2.0.3
 ```
 
-Then create the release with GitHub CLI:
+Then create the unified release with GitHub CLI (including Windows setup installer and checksums):
 ```bash
-gh release create v1.0.1 tadagram-worker-portal-linux-v1.0.1.tar.gz --title "Worker Portal Linux v1.0.1" --notes-file CHANGELOG.md
+gh release create v2.0.3 \
+  --repo Tadagram/biztada-portal-release \
+  --title "Worker Portal v2.0.3 (Windows & Linux)" \
+  --notes-file CHANGELOG.md \
+  ../dist/tadagram-worker-portal-linux-v2.0.3.tar.gz \
+  ../dist/tadagram-worker-portal-linux.tar.gz \
+  ../dist/TadaBusiness_Setup.exe \
+  ../dist/tada-business.exe \
+  ../dist/checksums.txt
 ```
