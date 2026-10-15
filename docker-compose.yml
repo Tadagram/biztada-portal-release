@@ -39,6 +39,7 @@ services:
     environment:
       - DISPLAY=:99
       - WORKER_ID=wkr-ai-controller
+      - IP_TYPE=datacenter
       - CORE_API_URL=${CORE_API_URL:-https://core.tadagram.com}
       - PORTAL_DEVICE_ID=${PORTAL_DEVICE_ID:-}
       - PORTAL_WORKER_UUID=${PORTAL_WORKER_UUID:-}
@@ -65,6 +66,7 @@ services:
       - DISPLAY=:99
       - HEADLESS=true
       - WORKER_ID=wkr-marketing
+      - IP_TYPE=datacenter
       - CORE_API_URL=${CORE_API_URL:-https://core.tadagram.com}
       - PORTAL_DEVICE_ID=${PORTAL_DEVICE_ID:-}
       - PORTAL_WORKER_UUID=${PORTAL_WORKER_UUID:-}
