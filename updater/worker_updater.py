@@ -124,6 +124,12 @@ if [ -n "$CHROME_BIN" ]; then
     ln -sf "$CHROME_BIN" /opt/google/chrome/chrome
 fi
 
+if [ -d "/app/worker/data" ]; then
+    mkdir -p /app/worker/data/.gemini /app/worker/data/.config/tadagram-ai-controller
+    ln -sfn /app/worker/data/.gemini /root/.gemini
+    ln -sfn /app/worker/data/.config/tadagram-ai-controller /root/.config/tadagram-ai-controller
+fi
+
 export PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
 export PYTHONPATH=/usr/local/lib/python3.11/site-packages:$PYTHONPATH
 export PLAYWRIGHT_NODEJS_PATH=/usr/local/lib/python3.11/site-packages/playwright/driver/node
