@@ -49,6 +49,10 @@ CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL_SECONDS", "1800")) # 30 mins
 ENCRYPTION_KEY = os.getenv("WRKX_ENCRYPTION_KEY", "")
 MASTER_SECRET = os.getenv("WORKER_MASTER_SECRET", "tadagram-dev-secret-CHANGE-IN-PROD-b3a9f2e1c4d5")
 
+# Allowed workers on Linux Docker Portal
+SUPPORTED_WORKERS = {"wkr-ai-controller", "wkr-marketing", "wkr-chatbot"}
+EXCLUDED_WORKERS = {"wkr-proxy", "wkr-local-ai-text2text", "wkr-local-ai-image2text"}
+
 # Regex for detecting worker releases and platform tagging
 # Matches:
 #   wkr-marketing-linux_v1.2.3.wrkx
@@ -202,6 +206,10 @@ def normalize_release(release: dict) -> Optional[dict]:
     if platform != "linux":
         return None
 
+    # Filter out workers that do not belong to Linux Portal
+    if canon_id not in SUPPORTED_WORKERS or canon_id in EXCLUDED_WORKERS:
+        return None
+
     norm = dict(release)
     norm["worker_id"] = canon_id
     norm["version"] = ver
@@ -223,6 +231,11 @@ def get_installed_workers() -> Dict[str, str]:
         if item.is_dir():
             raw_id = item.name
             canon_id = re.sub(r"[-_]linux$", "", raw_id)
+
+            # Only scan and track supported Linux portal workers
+            if canon_id not in SUPPORTED_WORKERS or canon_id in EXCLUDED_WORKERS:
+                continue
+
             worker_json = item / "worker.json"
             version_txt = item / "version.txt"
 
@@ -436,6 +449,9 @@ def filter_linux_updates(all_releases: List[dict], installed: Dict[str, str]) ->
             continue
 
         worker_id = r["worker_id"]
+        if worker_id not in SUPPORTED_WORKERS or worker_id in EXCLUDED_WORKERS:
+            continue
+
         ver = r["version"]
 
         prev = latest_by_worker.get(worker_id)
