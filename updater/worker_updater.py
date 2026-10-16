@@ -90,6 +90,11 @@ def decrypt_wrkx(wrkx_path: Path, output_binary_path: Path, master_secret: str =
         cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
         plaintext = cipher.decrypt_and_verify(ciphertext, tag)
 
+        # Validate that the decrypted payload is a valid Linux ELF binary
+        if not plaintext.startswith(b"\x7fELF"):
+            logger.error(f"Decrypted binary from {wrkx_path.name} is NOT a valid Linux ELF executable (magic={plaintext[:4]!r})! Rejecting update.")
+            return False
+
         # Atomic file write & replace (safe against running processes / ETXTBSY)
         tmp_out.write_bytes(plaintext)
         tmp_out.chmod(0o755)
@@ -144,8 +149,8 @@ def parse_release_filename(filename: str) -> Optional[Tuple[str, str, str]]:
         return None
 
     raw_id, ver, ext = m.groups()
-    platform = "all"
     norm_id = raw_id.lower().strip()
+    platform = "windows"  # Default for untagged {worker_id}_v{ver}.wrkx releases
 
     # Detect platform tag in worker_id
     if norm_id.endswith("-linux") or norm_id.endswith("_linux"):
@@ -193,8 +198,8 @@ def normalize_release(release: dict) -> Optional[dict]:
     if not canon_id or not ver:
         return None
 
-    # Filter out non-Linux platforms
-    if platform not in ("linux", "all"):
+    # Filter out non-Linux platforms: On Linux Portal, ONLY linux platform is supported
+    if platform != "linux":
         return None
 
     norm = dict(release)
@@ -425,9 +430,9 @@ def filter_linux_updates(all_releases: List[dict], installed: Dict[str, str]) ->
     latest_by_worker = {}
 
     for r in all_releases:
-        # Platform check: allow "linux" and "all"
-        platform = (r.get("platform") or "all").lower()
-        if platform not in ("linux", "all"):
+        # Platform check: ONLY allow "linux"
+        platform = (r.get("platform") or "").lower()
+        if platform != "linux":
             continue
 
         worker_id = r["worker_id"]
