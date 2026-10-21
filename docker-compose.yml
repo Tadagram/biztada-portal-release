@@ -41,6 +41,9 @@ services:
       - WORKER_ID=wkr-ai-controller
       - IP_TYPE=datacenter
       - CORE_API_URL=${CORE_API_URL:-https://core.tadagram.com}
+      - CORE_API_TOKEN=${CORE_API_TOKEN:-}
+      - PORTAL_JWT_TOKEN=${CORE_API_TOKEN:-}
+      - PORTAL_OPERATOR_TG_ID=${PORTAL_OPERATOR_TG_ID:-6461541179}
       - PORTAL_DEVICE_ID=${PORTAL_DEVICE_ID:-}
       - PORTAL_WORKER_UUID=${PORTAL_WORKER_UUID:-}
       - MQTT_HOST=${MQTT_HOST:-mqtt.tadagram.com}
