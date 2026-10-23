@@ -35,6 +35,7 @@ services:
     ipc: host
     volumes:
       - ./data/workers/wkr-ai-controller:/app/worker
+      - ./data/workers:/app/data/workers:ro
       - ./data/shared:/app/data/shared
     environment:
       - DISPLAY=:99
@@ -90,6 +91,7 @@ services:
     ipc: host
     volumes:
       - ./data/workers/wkr-chatbot:/app/worker
+      - ./data/workers:/app/data/workers:ro
       - ./data/shared:/app/data/shared
     environment:
       - DISPLAY=:99
