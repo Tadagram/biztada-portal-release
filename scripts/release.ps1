@@ -28,7 +28,7 @@ $ArchivePath = Join-Path $BaseDir $ArchiveName
 
 Write-Host "Packaging $ArchiveName..." -ForegroundColor Cyan
 if (Get-Command tar -ErrorAction SilentlyContinue) {
-    tar -czf $ArchivePath --exclude=".git" --exclude="data/workers/*" --exclude="data/shared/*" --exclude="*.tar.gz" -C $BaseDir .
+    tar -czf $ArchivePath --exclude=".git" --exclude="data/workers/*" --exclude="tadagram-worker-portal-linux*.tar.gz" -C $BaseDir .
     Write-Host "Successfully generated $ArchiveName" -ForegroundColor Green
 
     $DistDir = [System.IO.Path]::GetFullPath((Join-Path $BaseDir "..\dist"))

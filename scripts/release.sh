@@ -24,8 +24,7 @@ echo "Creating release bundle: $ARCHIVE_NAME..."
 tar -czf "$DIR/$ARCHIVE_NAME" \
     --exclude=".git" \
     --exclude="data/workers/*" \
-    --exclude="data/shared/*" \
-    --exclude="*.tar.gz" \
+    --exclude="tadagram-worker-portal-linux*.tar.gz" \
     -C "$DIR" .
 
 echo "Release archive created successfully at $DIR/$ARCHIVE_NAME"

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.5] - 2026-10-27
+
+### Added & Improved
+- **Google & Antigravity Demo Session Seeding (Plan A)**:
+  - Bundled clean template `google_demo_seed.tar.gz` in `data/shared/templates/` for trial and standby portals.
+  - Automatically unrolls Google cookies and Antigravity CLI credentials on container startup when portal is unallocated or in trial mode.
+- **Trial-to-Official Pro Activation & Cleanup**:
+  - Automatically wipes demo sessions (`browser_data_gemini`, `antigravity-oauth-token`) when official Pro is activated.
+  - Generates `.official_activated` marker to permanently disable demo seeding on customer portals.
+  - Updated `worker_updater.py` to preserve `data/shared/templates/` during portal stack updates.
+  - Enhanced `ensure_run_script` with machine-id persistence, `agy` symlink, and node runtime detection.
+
 ## [2.0.3] - 2026-10-14
 
 ### Fixed & Improved

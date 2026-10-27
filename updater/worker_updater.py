@@ -116,18 +116,77 @@ def ensure_run_script(worker_id: str, target_dir: Path):
     """
     run_sh = target_dir / "run.sh"
     if not run_sh.exists():
-        content = f"""#!/bin/bash
+        if worker_id == "wkr-ai-controller":
+            content = """#!/bin/bash
+CHROME_BIN=$(find /root/.cache/ms-playwright -name chrome -type f 2>/dev/null | head -n 1)
+[ -n "$CHROME_BIN" ] && ln -sf "$CHROME_BIN" /usr/bin/google-chrome
+
+# Start internal headless virtual framebuffer for Chromium (headless Linux, no GUI desktop)
+if ! pgrep -x "Xvfb" > /dev/null; then
+    rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
+    Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp -ac &
+    sleep 1
+fi
+
+# Ensure persistent directories exist in volume /app/worker/data
+mkdir -p /app/worker/data/.gemini /app/worker/data/.config/tadagram-ai-controller
+
+# ── Standby / Trial Demo Session Seeding (Plan A) ───────────────────────────
+# If portal is NOT marked as official (.official_activated does not exist)
+# and session is missing, extract template seed from shared volume.
+if [ -f "/app/data/shared/templates/google_demo_seed.tar.gz" ] && [ ! -f "/app/worker/data/.official_activated" ]; then
+    if [ ! -f "/app/worker/data/.gemini/antigravity-cli/antigravity-oauth-token" ] && [ ! -d "/app/worker/data/browser_data_gemini" ]; then
+        echo "🌱 [Seed] Unpacking Google demo session for trial/standby portal..."
+        tar -xzf /app/data/shared/templates/google_demo_seed.tar.gz -C /app/worker/data/
+        touch /app/worker/data/.is_demo_session
+        echo "✅ [Seed] Demo session ready (trial mode active)."
+    fi
+fi
+
+if [ ! -L "/root/.gemini" ]; then
+    if [ -d "/root/.gemini" ] && [ ! -d "/app/worker/data/.gemini/antigravity-cli" ]; then
+        cp -a /root/.gemini/* /app/worker/data/.gemini/ 2>/dev/null || true
+    fi
+    rm -rf /root/.gemini
+    ln -sf /app/worker/data/.gemini /root/.gemini
+fi
+mkdir -p /root/.config
+if [ ! -L "/root/.config/tadagram-ai-controller" ]; then
+    if [ -d "/root/.config/tadagram-ai-controller" ] && [ ! -f "/app/worker/data/.config/tadagram-ai-controller/worker_config.enc" ]; then
+        cp -a /root/.config/tadagram-ai-controller/* /app/worker/data/.config/tadagram-ai-controller/ 2>/dev/null || true
+    fi
+    rm -rf /root/.config/tadagram-ai-controller
+    ln -sf /app/worker/data/.config/tadagram-ai-controller /root/.config/tadagram-ai-controller
+fi
+
+# Ensure persistent Linux machine-id across container recreations
+if [ ! -f "/app/worker/data/machine-id" ]; then
+    cat /proc/sys/kernel/random/uuid | tr -d '-' > /app/worker/data/machine-id
+fi
+ln -sf /app/worker/data/machine-id /etc/machine-id
+
+# Ensure agy binary is available in PATH (/usr/local/bin/agy)
+if [ -f "/root/.local/bin/agy" ] && [ ! -L "/usr/local/bin/agy" ]; then
+    ln -sf /root/.local/bin/agy /usr/local/bin/agy
+fi
+
+# Ensure node is available for patchright/playwright driver (PYINSTALLER_BUILD_GUIDE Rule 1)
+NODE_CANDIDATE=$(find /usr/local/lib/python3.11/site-packages -name node -type f -perm /111 2>/dev/null | head -n 1)
+if [ -n "$NODE_CANDIDATE" ]; then
+    [ ! -L "/usr/local/bin/node" ] && ln -sf "$NODE_CANDIDATE" /usr/local/bin/node
+    export PLAYWRIGHT_NODEJS_PATH="$NODE_CANDIDATE"
+fi
+
+chmod +x /app/worker/wkr-ai-controller
+exec /app/worker/wkr-ai-controller
+"""
+        else:
+            content = f"""#!/bin/bash
 CHROME_BIN=$(find /root/.cache/ms-playwright /root/.cache/patchright -name chrome -type f 2>/dev/null | head -n 1)
 if [ -n "$CHROME_BIN" ]; then
     ln -sf "$CHROME_BIN" /usr/bin/google-chrome
     mkdir -p /opt/google/chrome
     ln -sf "$CHROME_BIN" /opt/google/chrome/chrome
-fi
-
-if [ -d "/app/worker/data" ]; then
-    mkdir -p /app/worker/data/.gemini /app/worker/data/.config/tadagram-ai-controller
-    ln -sfn /app/worker/data/.gemini /root/.gemini
-    ln -sfn /app/worker/data/.config/tadagram-ai-controller /root/.config/tadagram-ai-controller
 fi
 
 export PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
@@ -705,11 +764,15 @@ def check_and_update_portal_stack() -> bool:
                 for chunk in r.iter_content(chunk_size=65536):
                     f.write(chunk)
 
-            # Unpack safely into PORTAL_ROOT (preserve .env, data/)
+            # Unpack safely into PORTAL_ROOT (preserve .env, data/workers)
             import tarfile
             with tarfile.open(archive_path, "r:gz") as tar:
                 for member in tar.getmembers():
-                    if member.name in (".env", "data", "data/workers", "data/shared") or member.name.startswith("data/"):
+                    if member.name in (".env", "data", "data/workers", "data/shared"):
+                        continue
+                    if member.name.startswith("data/workers/"):
+                        continue
+                    if member.name.startswith("data/") and not member.name.startswith("data/shared/templates/"):
                         continue
                     tar.extract(member, path=PORTAL_ROOT)
 
