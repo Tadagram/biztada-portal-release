@@ -3,7 +3,8 @@
 data/workers/*
 !data/workers/.gitkeep
 data/temp_downloads/
-*.tar.gz
+tadagram-worker-portal-linux*.tar.gz
+!data/shared/templates/*
 *.zip
 *.log
 __pycache__/
